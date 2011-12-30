@@ -1,0 +1,210 @@
+#!/bin/sh
+
+export DEBIAN_FRONTEND=noninteractive
+export TOOLS_VOLUME=/tools
+
+echo ""
+echo ""
+echo "***************************************************************************************************"
+echo "Configuring repositories... "
+echo "***************************************************************************************************"
+sudo add-apt-repository "deb http://archive.canonical.com/ lucid partner"
+sudo apt-get remove openjdk-6-jre openjdk-6-jre-headless openjdk-6-jre-lib -y
+sudo apt-get update
+sudo apt-get upgrade -y
+
+echo ""
+echo ""
+echo "****************************************************************************************************"
+echo "Configuring and mounting persistent filesystems... "
+echo "****************************************************************************************************"
+#
+# ATENCAO: nao consegui deixar, nesse contexto, a utilizacao das variaveis
+#
+sudo su - -c 'echo "/dev/sdf	/tools	ext4	defaults	0	0" >> /etc/fstab'
+sudo mkdir -p $TOOLS_VOLUME
+sudo mount -v $TOOLS_VOLUME
+sudo chown ubuntu:ubuntu $TOOLS_VOLUME -R
+
+echo ""
+echo ""
+echo "****************************************************************************************************"
+echo "Adjusting time... "
+echo "****************************************************************************************************"
+sudo apt-get -y install rdate
+sudo rm /etc/localtime
+sudo ln -s /usr/share/zoneinfo/America/Sao_Paulo /etc/localtime
+sudo rdate -s ntp1.fau.de
+
+echo ""
+echo ""
+echo "****************************************************************************************************"
+echo "Installing unzip... "
+echo "****************************************************************************************************"
+sudo apt-get install unzip
+
+echo ""
+echo ""
+echo "****************************************************************************************************"
+echo "Installing java and maven... "
+echo "****************************************************************************************************"
+sudo apt-get install maven2 -y
+ln -s /usr/share/maven2 ~/maven
+mkdir -p ~/.m2
+echo '
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0
+                      http://maven.apache.org/xsd/settings-1.0.0.xsd">
+        <servers>
+	        <server>
+	            <id>deployment.webdav</id>
+	            <username>dextra</username>
+	            <password>y1Bq3hUN</password>
+	        </server>
+	        <server>
+	            <id>mirror-dextra</id>
+	            <username>dextra</username>
+	            <password>y1Bq3hUN</password>
+	        </server>
+	        <server>
+	            <id>dextra</id>
+	            <username>dextra</username>
+	            <password>y1Bq3hUN</password>
+	        </server>
+	        <server>
+	            <id>dextra-releases</id>
+	            <username>dextra</username>
+	            <password>y1Bq3hUN</password>
+	        </server>
+        </servers>
+</settings>' > ~/.m2/settings.xml
+sudo apt-get install sun-java6-jdk -y
+ln -s /usr/lib/jvm/java-6-sun ~/java
+echo "done."
+
+echo ""
+echo ""
+echo "****************************************************************************************************"
+echo "Installing apache tomcat... "
+echo "****************************************************************************************************"
+wget http://ftp.unicamp.br/pub/apache/tomcat/tomcat-6/v6.0.35/bin/apache-tomcat-6.0.35.tar.gz -O /tmp/tomcat.tgz
+cd $TOOLS_VOLUME
+tar xvfz /tmp/tomcat.tgz
+cd -
+ln -s $TOOLS_VOLUME/apache-tomcat-6.0.35 ~/tomcat
+echo "export CATALINA_OPTS=\"-Xms512m -Xmx1564m -XX:MaxPermSize=1564m\"" >> ~/.bashrc
+
+echo ""
+echo ""
+echo "****************************************************************************************************"
+echo "Installing jenkins... "
+echo "****************************************************************************************************"
+wget http://mirrors.jenkins-ci.org/war/latest/jenkins.war -O $TOOLS_VOLUME/apache-tomcat-6.0.35/webapps/jenkins.war
+mkdir -p $TOOLS_VOLUME/jenkins
+ln -s $TOOLS_VOLUME/jenkins ~/.hudson
+
+echo ""
+echo ""
+echo "****************************************************************************************************"
+echo "Installing sonar... "
+echo "****************************************************************************************************"
+wget http://dist.sonar.codehaus.org/sonar-2.7.zip -O /tmp/sonar.zip
+unzip -o -d $TOOLS_VOLUME /tmp/sonar.zip
+ln -s $TOOLS_VOLUME/sonar-2.7 ~/sonar
+cd ~/sonar/war
+./build-war.sh
+ln -s ~/sonar/war/sonar.war ~/tomcat/webapps/sonar.war 
+
+echo ""
+echo ""
+echo "****************************************************************************************************"
+echo "Installing jacoco... "
+echo "****************************************************************************************************"
+wget http://repository.codehaus.org/org/codehaus/sonar-plugins/sonar-jacoco-plugin/0.5/sonar-jacoco-plugin-0.5.jar -O ~/sonar/extensions/plugins/sonar-jacoco-plugin-0.5.jar
+wget https://sourceforge.net/projects/eclemma/files/07_JaCoCo/0.5.1/jacoco-0.5.1.20110321224001.zip/download -O /tmp/jacoco.zip
+mkdir -p $TOOLS_VOLUME/jacoco-0.5.1
+unzip -o -d $TOOLS_VOLUME/jacoco-0.5.1 /tmp/jacoco.zip
+ln -s $TOOLS_VOLUME/jacoco-0.5.1 ~/jacoco
+
+echo ""
+echo ""
+echo "****************************************************************************************************"
+echo "Installing XVFB..."
+echo "****************************************************************************************************"
+sudo apt-get install xvfb -y
+echo "
+#!/bin/bash
+nohup Xvfb -ac :99 2>&1 1>/dev/null &" > ~/startDisplay.sh
+chmod +x ~/startDisplay.sh
+
+echo ""
+echo ""
+echo "****************************************************************************************************"
+echo "Installing Firefox..."
+echo "****************************************************************************************************"
+sudo apt-get install firefox-3.5 -y
+
+echo ""
+echo ""
+echo "****************************************************************************************************"
+echo "Installing and setup apache... "
+echo "****************************************************************************************************"
+sudo apt-get install apache2 -y
+
+sudo a2enmod rewrite
+sudo a2enmod proxy_http
+
+JENKINS_CONTEXT=jenkins
+SONAR_CONTEXT=sonar
+CONTEXT_FILE=dextraQA.conf
+
+echo "
+<VirtualHost *:80>
+  DocumentRoot /var/www 
+
+  ProxyPass /$JENKINS_CONTEXT http://localhost:8080/$JENKINS_CONTEXT
+  ProxyPassReverse /$JENKINS_CONTEXT http://localhost:8080/$JENKINS_CONTEXT
+
+  <Location /$JENKINS_CONTEXT>
+    Allow from all
+    DefaultType text/html
+  </Location>
+
+  ProxyPass /$SONAR_CONTEXT http://localhost:8080/$SONAR_CONTEXT
+  ProxyPassReverse /$SONAR_CONTEXT http://localhost:8080/$SONAR_CONTEXT
+
+  <Location /$SONAR_CONTEXT>
+    Allow from all
+    DefaultType text/html
+  </Location>
+
+</VirtualHost>
+" > /tmp/$CONTEXT_FILE
+sudo mv /tmp/$CONTEXT_FILE /etc/apache2/conf.d
+nohup sudo /etc/init.d/apache2 restart > /tmp/nohup.out
+
+echo ""
+echo ""
+echo "****************************************************************************************************"
+echo "Configuring rc.local... "
+echo "****************************************************************************************************"
+#
+# ATENCAO: nao consegui deixar, nesse contexto, a utilizacao das variaveis
+#
+echo '
+#!/bin/bash
+
+su - ubuntu -c "/home/ubuntu/tomcat/bin/catalina.sh start"
+su - ubuntu -c "/home/ubuntu/startDisplay.sh"
+
+exit 0' > /tmp/rc.local
+sudo mv /tmp/rc.local /etc/rc.local
+sudo chown root.root /etc/rc.local
+sudo chmod 755 /etc/rc.local
+
+echo ""
+echo ""
+echo "****************************************************************************************************"
+echo "The machine is ok. Please make a stop / start and enjoy your environment! "
+echo "****************************************************************************************************"
